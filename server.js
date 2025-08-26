@@ -9,7 +9,6 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 
-const credentials = dotenv.config().parsed;
 const BCRYPT_ROUNDS = 10;
 
 const app = express();
@@ -18,11 +17,7 @@ app.use(express.static('public'));
 
 // Configuración de PostgreSQL
 const pool = new Pool({
-    user: credentials.DB_USER,
-    host: credentials.DB_HOST,
-    database: credentials.DB_NAME,
-    password: credentials.DB_PASS,
-    port: credentials.PORT,
+    connectionString: process.env.DATABASE_URL,
 
     max: 8,
     min: 1,
@@ -66,7 +61,7 @@ const authenticateToken = (req, res, next) => {
     }
 
     try {
-        const decoded = jwt.verify(token, credentials.JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded;
         next();
     } catch (err) {
@@ -211,7 +206,7 @@ app.post('/api/v1/login', loginLimiter, async (req, res) => {
             {
                 role: user.role
             },
-            credentials.JWT_SECRET,
+            process.env.JWT_SECRET,
             {
                 expiresIn: "1h"
             }
@@ -284,7 +279,7 @@ app.get('/api/v1/verify-token', async (req, res) => {
     }
 
     try {
-        const decoded = jwt.verify(token, credentials.JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // console.log('Token verificado con éxito:', decoded);
         res.status(200).json({
@@ -443,21 +438,21 @@ app.use((req, res, next) => {
 
     // Si es ruta raíz, redirigir a inicio
     if (req.path === '/' || req.path === '') {
-        return res.redirect('http://localhost:3000/inicio');
+        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
     }
 
     // Si es API que no existe, redirigir (o podrías devolver 404)
     if (req.path.startsWith('/api')) {
-        return res.redirect('http://localhost:3000/inicio');
+        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
     }
 
     // Si es archivo estático que no existe, redirigir
     if (req.path.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|html)$/)) {
-        return res.redirect('http://localhost:3000/inicio');
+        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
     }
 
     // Para cualquier otra ruta, redirigir
-    res.redirect('http://localhost:3000/');
+    res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
 });
 
-app.listen(3000, () => console.log('Servidor en http://localhost:3000'));
+app.listen(process.env.PORT || 3000);
