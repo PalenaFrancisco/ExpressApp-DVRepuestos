@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 
+const credentials = dotenv.config().parsed;
 const BCRYPT_ROUNDS = 10;
 
 const app = express();
@@ -17,7 +18,11 @@ app.use(express.static('public'));
 
 // Configuración de PostgreSQL
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    user: credentials.DB_USER,
+    host: credentials.DB_HOST,
+    database: credentials.DB_NAME,
+    password: credentials.DB_PASS,
+    port: credentials.PORT,
 
     max: 8,
     min: 1,
@@ -61,7 +66,7 @@ const authenticateToken = (req, res, next) => {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, credentials.JWT_SECRET);
         req.user = decoded;
         next();
     } catch (err) {
@@ -206,7 +211,7 @@ app.post('/api/v1/login', loginLimiter, async (req, res) => {
             {
                 role: user.role
             },
-            process.env.JWT_SECRET,
+            credentials.JWT_SECRET,
             {
                 expiresIn: "1h"
             }
@@ -279,7 +284,7 @@ app.get('/api/v1/verify-token', async (req, res) => {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, credentials.JWT_SECRET);
 
         // console.log('Token verificado con éxito:', decoded);
         res.status(200).json({
@@ -430,33 +435,29 @@ app.get("/api/v1/files", authenticateToken, async (req, res) => {
 })
 
 app.use((req, res, next) => {
+
     // Si es la ruta de inicio, continuar normalmente
     if (req.path === '/') {
         return next();
     }
 
-    // Si es API que no existe, devolver 404
-    if (req.path.startsWith('/api')) {
-        return res.status(404).json({
-            success: false,
-            error: 'Endpoint no encontrado'
-        });
+    // Si es ruta raíz, redirigir a inicio
+    if (req.path === '/' || req.path === '') {
+        return res.redirect('http://localhost:3000/inicio');
     }
 
-    // Para otras rutas, redirigir al home
-    const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
-    res.redirect(domain);
+    // Si es API que no existe, redirigir (o podrías devolver 404)
+    if (req.path.startsWith('/api')) {
+        return res.redirect('http://localhost:3000/inicio');
+    }
+
+    // Si es archivo estático que no existe, redirigir
+    if (req.path.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|html)$/)) {
+        return res.redirect('http://localhost:3000/inicio');
+    }
+
+    // Para cualquier otra ruta, redirigir
+    res.redirect('http://localhost:3000/');
 });
 
-app.use((err, req, res, next) => {
-    console.error('Error no manejado:', err);
-    res.status(500).json({
-        success: false,
-        error: 'Error interno del servidor'
-    });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(3000, () => console.log('Servidor en http://localhost:3000'));
