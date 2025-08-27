@@ -430,29 +430,33 @@ app.get("/api/v1/files", authenticateToken, async (req, res) => {
 })
 
 app.use((req, res, next) => {
-
     // Si es la ruta de inicio, continuar normalmente
     if (req.path === '/') {
         return next();
     }
 
-    // Si es ruta raíz, redirigir a inicio
-    if (req.path === '/' || req.path === '') {
-        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
-    }
-
-    // Si es API que no existe, redirigir (o podrías devolver 404)
+    // Si es API que no existe, devolver 404
     if (req.path.startsWith('/api')) {
-        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
+        return res.status(404).json({
+            success: false,
+            error: 'Endpoint no encontrado'
+        });
     }
 
-    // Si es archivo estático que no existe, redirigir
-    if (req.path.match(/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|html)$/)) {
-        return res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
-    }
-
-    // Para cualquier otra ruta, redirigir
-    res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
+    // Para otras rutas, redirigir al home
+    const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
+    res.redirect(domain);
 });
 
-app.listen(process.env.PORT || 3000);
+app.use((err, req, res, next) => {
+    console.error('Error no manejado:', err);
+    res.status(500).json({
+        success: false,
+        error: 'Error interno del servidor'
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
