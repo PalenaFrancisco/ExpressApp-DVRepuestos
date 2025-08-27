@@ -469,9 +469,12 @@ app.use((req, res, next) => {
         });
     }
 
-    // Para otras rutas, redirigir al home
-    const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
-    res.redirect(domain);
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+        res.redirect(process.env.RAILWAY_PUBLIC_DOMAIN);
+    } else {
+        console.warn('⚠️  RAILWAY_PUBLIC_DOMAIN no está configurada. Redirigiendo a "/"');
+        res.redirect('/');
+    }
 });
 
 app.use((err, req, res, next) => {
@@ -482,7 +485,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+const port = process.env.PORT || 3000;
+app.listen(port, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${port}`);
 });
