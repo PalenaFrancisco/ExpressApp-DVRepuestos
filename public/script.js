@@ -2,6 +2,7 @@ let isUploading = false;
 let currentDateFile = [];
 let isLoggedIn = false;
 let role = null;
+let staticListenersAttached = false;
 
 // DOM Elements
 const elements = {
@@ -38,6 +39,7 @@ const elements = {
     changePasswordBtn: document.getElementById('changePasswordBtn'),
     showPasswordBtn: document.getElementById('showPasswordBtn'),
 };
+
 
 // File status templates
 const fileTemplates = {
@@ -137,7 +139,7 @@ const login = async (password) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ password })
+            body: JSON.stringify({ 'password': password })
         });
 
         if (res.ok) {
@@ -150,6 +152,7 @@ const login = async (password) => {
             applyRoleRestrictions(role);
 
         } else {
+            console.log(await res.json());
             showLoginError();
         }
     } catch (error) {
@@ -411,35 +414,14 @@ const removeEventListeners = () => {
     elements.dropZone = newDropZone;
 };
 
-const initializeDashboard = () => {
-
-    removeEventListeners();
-
-    elements.fileStatus.innerHTML = fileTemplates.loading;
-
-    getdata();
-
-    elements.excelFile.addEventListener('change', handleFileChange);
-
-    elements.dropZone.addEventListener('click', (e) => {
-        if (e.target.closest('#deleteSelectedFileBtn') || e.target.closest('#changeFileBtn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            return;
-        }
-
-        elements.excelFile.click();
-    });
+const attachStaticListeners = () => {
+    if (staticListenersAttached) return;
 
     elements.showPasswordBtn.addEventListener("click", handleShowPass);
-
     elements.newPasswordInput.type = 'password';
-
     elements.newPasswordInput.addEventListener("input", handlePasswordChange);
-
     elements.changePasswordBtn.disabled = true;
 
-    // Form submission
     elements.uploadForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (isUploading) return;
@@ -472,6 +454,33 @@ const initializeDashboard = () => {
             toggleUploadState(false);
         }
     });
+
+    staticListenersAttached = true;
+};
+
+const initializeDashboard = () => {
+
+    removeEventListeners();
+    attachStaticListeners();
+
+    resetDropZone();
+
+    elements.fileStatus.innerHTML = fileTemplates.loading;
+
+    getdata();
+
+    elements.excelFile.addEventListener('change', handleFileChange);
+
+    elements.dropZone.addEventListener('click', (e) => {
+        if (e.target.closest('#deleteSelectedFileBtn') || e.target.closest('#changeFileBtn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
+        elements.excelFile.click();
+    });
+
 };
 
 window.clearSelectedFile = () => {
@@ -547,6 +556,7 @@ elements.loginForm.addEventListener('submit', async (e) => {
     if (elements.loginBtn.disabled) return;
 
     const password = elements.loginPassword.value.trim();
+    console.log(password);
     if (!password) return;
 
     toggleLoginState(true);
@@ -601,7 +611,6 @@ window.changePassword = async (e) => {
         }
 
         // Deshabilitar botón durante la petición
-        const originalText = elements.changePasswordBtn.textContent;
         elements.changePasswordBtn.disabled = true;
         elements.changePasswordBtn.textContent = 'Cambiando...';
 

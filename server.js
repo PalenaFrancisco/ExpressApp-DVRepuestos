@@ -1,66 +1,68 @@
 const express = require('express');
 const multer = require('multer');
-const { Pool } = require('pg');
-const { json } = require('body-parser');
 const cors = require('cors');
-const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const rateLimit = require('express-rate-limit');
 const path = require('path');
+const { generalLimiter, loginLimiter, uploadLimiter } = require('./middlewares/rateLimiters');
+
+// Importar la configuración del pool corregida
+const { safeQuery, checkPoolHealth, initializeDatabase } = require('./database');
 
 const BCRYPT_ROUNDS = 10;
 
-if (!process.env.DATABASE_URL) {
-    console.error('❌ DATABASE_URL no está configurada');
-    process.exit(1);
-}
-
-if (!process.env.JWT_SECRET) {
-    console.error('❌ JWT_SECRET no está configurada');
-    process.exit(1);
-}
-
 const app = express();
-app.use(json());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.set('trust proxy', false);
 app.use(express.static('public'));
+app.use(generalLimiter);
 
-// Configuración de PostgreSQL
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 8,
-    min: 1,
-    idleTimeoutMillis: 10000,
-    connectionTimeoutMillis: 3000,
-    acquireTimeoutMillis: 30000,
-    maxUses: 5000,
-    statement_timeout: 30000,
-    query_timeout: 30000,
-});
+// Middleware global para limpieza automática
+const cleanupMiddleware = (req, res, next) => {
+    const cleanup = () => {
+        if (req.file) req.file.buffer = null;
+        if (req.files) req.files.forEach(file => file.buffer = null);
+        if (req.body?.password) req.body.password = null;
+    };
 
-// Almacena el archivo en memoria como Buffer
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+
+    next();
+};
+
+app.use(cleanupMiddleware);
+
+// Configuración de multer optimizada
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
         fileSize: 10 * 1024 * 1024,
-        fieldSize: 1024 * 1024,
-        files: 1
+        fieldSize: 100 * 1024,
+        files: 1,
+        parts: 2
+    },
+    fileFilter: (req, file, cb) => {
+        const validMimeTypes = [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel'
+        ];
+
+        if (validMimeTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Formato de archivo inválido'), false);
+        }
     }
 });
 
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 5, // 5 intentos por IP
-    message: {
-        success: false,
-        error: 'Demasiados intentos de login. Intenta en 15 minutos.'
-    }
-});
 
+
+// Middleware de autenticación
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = authHeader?.split(' ')[1];
 
     if (!token) {
         return res.status(401).json({
@@ -75,30 +77,23 @@ const authenticateToken = (req, res, next) => {
         req.user = decoded;
         next();
     } catch (err) {
-        let statusCode = 403;
-        let errorMessage = 'Token inválido';
-        let errorCode = 'INVALID_TOKEN';
+        const errorMap = {
+            'TokenExpiredError': { code: 401, msg: 'Token expirado', type: 'TOKEN_EXPIRED' },
+            'JsonWebTokenError': { code: 403, msg: 'Token malformado', type: 'MALFORMED_TOKEN' }
+        };
 
-        if (err.name === "TokenExpiredError") {
-            statusCode = 401;
-            errorMessage = 'Token expirado';
-            errorCode = 'TOKEN_EXPIRED';
-        } else if (err.name === "JsonWebTokenError") {
-            statusCode = 403;
-            errorMessage = 'Token malformado';
-            errorCode = 'MALFORMED_TOKEN';
-        }
+        const error = errorMap[err.name] || { code: 403, msg: 'Token inválido', type: 'INVALID_TOKEN' };
 
-        return res.status(statusCode).json({
+        return res.status(error.code).json({
             success: false,
-            error: errorMessage,
-            code: errorCode
+            error: error.msg,
+            code: error.type
         });
     }
 };
 
 const requireAdmin = (req, res, next) => {
-    if (req.user.role !== 'admin') {
+    if (req.user?.role !== 'admin') {
         return res.status(403).json({
             success: false,
             error: 'Permisos de administrador requeridos'
@@ -107,159 +102,166 @@ const requireAdmin = (req, res, next) => {
     next();
 };
 
+const corsOptionsDelegate = (req, callback) => {
+    const publicRoutes = ['/api/v1/login', '/api/v1/verify-token'];
+    const isPublic = publicRoutes.some(route => req.path.startsWith(route));
 
-const corsPrivateOptions = {
-    origin: false,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
-    credentials: true,
-    optionsSuccessStatus: 200
+    const corsOptions = {
+        origin: (origin, cb) => {
+            const allowedOrigins = process.env.CORS_ORIGINS?.split(',') || [];
+            if (!origin || allowedOrigins.includes(origin)) {
+                cb(null, true);
+            } else {
+                cb(new Error('CORS bloqueado'));
+            }
+        },
+        credentials: !isPublic,
+    };
+
+    callback(null, corsOptions);
 };
 
-const corsPublicOptions = {
-    origin: false,
-    methods: ['POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: false,
-    optionsSuccessStatus: 200
-};
+app.use(cors(corsOptionsDelegate));
 
-
-//CORS confiruguration
-// Para rutas simples sin autenticación
-app.use('/api/v1/login', cors(corsPublicOptions));
-app.use('/api/v1/verify-token', cors(corsPublicOptions));
-
-// Para rutas privadas que requieren autenticación
-app.use('/api/v1/upload-excel', cors(corsPrivateOptions));
-app.use('/api/v1/get-excel', cors(corsPrivateOptions));
-app.use('/api/v1/delete-excel', cors(corsPrivateOptions));
-app.use('/api/v1/files', cors(corsPrivateOptions));
-app.use('/api/v1/new-password', cors(corsPrivateOptions));
-
-
-// Crear tabla si no existe (ejecutar una sola vez)
+// Función para crear tablas con mejor manejo de errores
 async function createTable() {
     try {
+        console.log('🔍 Verificando existencia de tablas...');
 
-        const testConnection = await pool.query('SELECT NOW()');
-        console.log('✅ Conexión a DB exitosa:', testConnection.rows[0]);
-
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS single_excel_file (
-                id INT PRIMARY KEY DEFAULT 1,
-                file_name VARCHAR(255) NOT NULL,
-                file_data BYTEA NOT NULL,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT one_row_only CHECK (id = 1)
-        );`);
-
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS password_rol (
-                id SERIAL PRIMARY KEY,
-                role VARCHAR(255) NOT NULL UNIQUE,
-                password_hash VARCHAR(255) NOT NULL
-            );
+        const tablesExist = await safeQuery(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'single_excel_file'
+            ) AS excel_exists,
+            EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'password_rol'
+            ) AS password_exists;
         `);
 
-        // Check and insert admin user
-        const adminExists = await pool.query('SELECT * FROM password_rol WHERE role = $1;', ['admin']);
-        if (adminExists.rows.length === 0) {
-            const adminPass = await bcrypt.hash("admin123", BCRYPT_ROUNDS);
-            await pool.query(
-                "INSERT INTO password_rol (role, password_hash) VALUES ($1, $2);",
-                ["admin", adminPass]
-            );
-        }
+        const { excel_exists, password_exists } = tablesExist.rows[0];
 
-        // Check and insert guest user
-        const guestExists = await pool.query('SELECT * FROM password_rol WHERE role = $1;', ['guest']);
-        if (guestExists.rows.length === 0) {
-            const guestPass = await bcrypt.hash("guest123", BCRYPT_ROUNDS);
-            await pool.query(
-                'INSERT INTO password_rol (role, password_hash) VALUES ($1, $2);',
-                ["guest", guestPass]
-            );
-        }
-
-
-        console.log('Tabla creada o ya existente');
-    } catch (err) {
-        console.error('❌ Error detallado:', {
-            message: err.message,
-            code: err.code,
-            connectionString: process.env.DATABASE_URL ? 'Configurada' : 'NO configurada'
-        });
-
-        // No fallar la app en producción si es solo un problema de tablas
-        if (process.env.NODE_ENV === 'production') {
-            console.log('⚠️  Continuando sin crear tablas...');
+        if (excel_exists && password_exists) {
+            console.log('✅ Las tablas ya existen, omitiendo creación');
             return;
         }
 
+        if (!excel_exists) {
+            await safeQuery(`
+                CREATE TABLE IF NOT EXISTS single_excel_file (
+                    id INT PRIMARY KEY DEFAULT 1,
+                    file_name VARCHAR(255) NOT NULL,
+                    file_data BYTEA NOT NULL,
+                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT one_row_only CHECK (id = 1)
+            );`);
+            console.log('✅ Tabla single_excel_file creada');
+        }
+
+        if (!password_exists) {
+            await safeQuery(`
+                CREATE TABLE IF NOT EXISTS password_rol (
+                    id SERIAL PRIMARY KEY,
+                    role VARCHAR(255) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL
+                );
+            `);
+            console.log('✅ Tabla password_rol creada');
+
+            const adminPass = await bcrypt.hash("admin123", BCRYPT_ROUNDS);
+            const guestPass = await bcrypt.hash("guest123", BCRYPT_ROUNDS);
+
+            await safeQuery(
+                "INSERT INTO password_rol (role, password_hash) VALUES ($1, $2), ($3, $4);",
+                ["admin", adminPass, "guest", guestPass]
+            );
+            console.log('✅ Usuarios iniciales creados');
+        }
+
+    } catch (err) {
+        console.error('❌ Error en createTable:', {
+            message: err.message,
+            code: err.code,
+            stack: err.stack
+        });
+
+        if (process.env.NODE_ENV === 'production') {
+            console.log('⚠️ Continuando sin crear tablas en producción...');
+            return;
+        }
         throw err;
     }
 }
 
-createTable();
-
-
+// Rutas
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Endpoint de health check
+app.get('/api/v1/health', async (req, res) => {
+    try {
+        const isHealthy = await checkPoolHealth();
+        res.status(200).json({
+            success: true,
+            status: isHealthy ? 'healthy' : 'unhealthy',
+            timestamp: new Date().toISOString()
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            status: 'error',
+            error: err.message
+        });
+    }
+});
 
 app.post('/api/v1/login', loginLimiter, async (req, res) => {
-    let result;
-    try {
-        const { password } = req.body;
+    const { password } = req.body;
 
-        if (!password) {
-            return res.status(400).json({
-                success: false,
-                error: 'Contraseña requerida'
-            })
+    if (!password) {
+        return res.status(400).json({
+            success: false,
+            error: 'Contraseña requerida'
+        });
+    }
+
+    try {
+        const result = await safeQuery('SELECT role, password_hash FROM password_rol');
+
+        let user = null;
+        for (const row of result.rows) {
+            if (bcrypt.compareSync(password, row.password_hash)) {
+                user = { role: row.role };
+                break;
+            }
+            row.password_hash = null;
         }
 
-        result = await pool.query('SELECT role, password_hash FROM password_rol');
-        const user = result.rows.find(row => bcrypt.compareSync(password, row.password_hash));
-
         if (!user) {
-            return res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
+            return res.status(401).json({
+                success: false,
+                error: 'Contraseña incorrecta'
+            });
         }
 
         const token = jwt.sign(
-            {
-                role: user.role
-            },
+            { role: user.role },
             process.env.JWT_SECRET,
-            {
-                expiresIn: "1h"
-            }
-        )
+            { expiresIn: "1h" }
+        );
 
         res.json({
             success: true,
-            data: {
-                token,
-                role: user.role
-            }
-        })
+            data: { token, role: user.role }
+        });
 
     } catch (err) {
         console.error('Error en login:', err);
         res.status(500).json({
             success: false,
-            error: "Error interno del server"
-        })
-    } finally {
-        if (result && result.rows) {
-            result.rows.forEach(row => {
-                row.password_hash = null;
-            });
-            result.rows = null;
-            result = null;
-        }
+            error: "Error interno del servidor"
+        });
     }
 });
 
@@ -274,29 +276,29 @@ app.post('/api/v1/new-password', authenticateToken, requireAdmin, async (req, re
     }
 
     try {
-        const hasherPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-        await pool.query('UPDATE password_rol SET password_hash = $1 WHERE role = $2', [hasherPassword, 'guest'])
+        const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+        await safeQuery('UPDATE password_rol SET password_hash = $1 WHERE role = $2',
+            [hashedPassword, 'guest']);
 
-        return res.status(200).json({
+        res.status(200).json({
             success: true,
             message: 'Contraseña actualizada correctamente'
         });
 
     } catch (err) {
         console.error('Error al actualizar la contraseña:', err);
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             error: 'Error interno del servidor'
         });
     }
-})
+});
 
 app.get('/api/v1/verify-token', async (req, res) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader?.split(' ')[1];
 
     if (!token) {
-        console.error('Token no proporcionado');
         return res.status(401).json({
             success: false,
             error: 'Token de acceso requerido',
@@ -306,8 +308,6 @@ app.get('/api/v1/verify-token', async (req, res) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        // console.log('Token verificado con éxito:', decoded);
         res.status(200).json({
             success: true,
             data: {
@@ -317,109 +317,100 @@ app.get('/api/v1/verify-token', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error al verificar el token:', error);
-        let statusCode = 403;
-        let errorMessage = 'Token inválido';
-        let errorCode = 'INVALID_TOKEN';
+        const errorMap = {
+            'TokenExpiredError': { code: 401, msg: 'Token expirado', type: 'TOKEN_EXPIRED' },
+            'JsonWebTokenError': { code: 403, msg: 'Token inválido', type: 'INVALID_TOKEN' }
+        };
 
-        if (error.name === 'TokenExpiredError') {
-            console.error('Token expirado');
-            statusCode = 401;
-            errorMessage = 'Token expirado';
-            errorCode = 'TOKEN_EXPIRED';
-        }
+        const err = errorMap[error.name] || { code: 403, msg: 'Token inválido', type: 'INVALID_TOKEN' };
 
-        return res.status(statusCode).json({
+        return res.status(err.code).json({
             success: false,
-            error: errorMessage,
-            code: errorCode,
+            error: err.msg,
+            code: err.type,
         });
     }
 });
 
-app.post('/api/v1/upload-excel', authenticateToken, requireAdmin, upload.single('excelFile'), async (req, res) => {
+app.post('/api/v1/upload-excel', authenticateToken, requireAdmin, uploadLimiter, upload.single('excelFile'), async (req, res) => {
     if (!req.file) {
-        return res.status(400).send('No se subió ningún archivo');
-    }
-
-    const validMimeTypes = [
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'application/vnd.ms-excel'
-    ];
-
-    if (!validMimeTypes.includes(req.file.mimetype)) {
-        return res.status(400).json({ error: 'Formato de Archivo invalido' });
+        return res.status(400).json({
+            success: false,
+            error: 'No se subió ningún archivo'
+        });
     }
 
     if (req.file.size > 10 * 1024 * 1024) {
-        return res.status(400).json({ error: 'Archivo demasiado grande' });
+        return res.status(400).json({
+            success: false,
+            error: 'Archivo demasiado grande (máximo 10MB)'
+        });
     }
 
     try {
-        // Usamos INSERT con ON CONFLICT para sobrescribir
-        await pool.query(`
-        INSERT INTO single_excel_file (id, file_name, file_data)
-        VALUES (1, $1, $2)
-        ON CONFLICT (id) DO UPDATE SET
-        file_name = EXCLUDED.file_name,
-        file_data = EXCLUDED.file_data,
-        uploaded_at = CURRENT_TIMESTAMP
-    `, [req.file.originalname, req.file.buffer]);
+        await safeQuery(`
+            INSERT INTO single_excel_file (id, file_name, file_data)
+            VALUES (1, $1, $2)
+            ON CONFLICT (id) DO UPDATE SET
+            file_name = EXCLUDED.file_name,
+            file_data = EXCLUDED.file_data,
+            uploaded_at = CURRENT_TIMESTAMP
+        `, [req.file.originalname, req.file.buffer]);
 
-        res.status(200).send('Archivo Excel actualizado correctamente');
+        res.status(200).json({
+            success: true,
+            message: 'Archivo Excel actualizado correctamente'
+        });
+
     } catch (err) {
-        console.error(err);
-        res.status(500).send('Error al guardar el archivo');
-    } finally {
-        if (req.file) {
-            req.file.buffer = null;
-            req.file = null;
-        }
+        console.error('Error al guardar archivo:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Error al guardar el archivo'
+        });
     }
 });
 
-// Ruta para obtener el archivo actual
 app.get('/api/v1/get-excel', authenticateToken, async (req, res) => {
-    let result;
     try {
-        result = await pool.query(
-            `SELECT file_name, file_data FROM single_excel_file WHERE id = 1`
+        const result = await safeQuery(
+            'SELECT file_name, file_data FROM single_excel_file WHERE id = 1'
         );
 
         if (result.rows.length === 0) {
-            return res.status(404).send('No hay archivo almacenado');
+            return res.status(404).json({
+                success: false,
+                error: 'No hay archivo almacenado'
+            });
         }
 
         const file = result.rows[0];
+
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', `attachment; filename="${file.file_name}"`);
-        res.send(file.file_data);
+        res.setHeader('Content-Length', file.file_data.length);
+
+        res.end(file.file_data);
+        file.file_data = null;
 
     } catch (err) {
-        res.status(500).send('Error al recuperar el archivo');
-    } finally {
-        if (result && result.rows) {
-            result.rows.forEach(row => {
-                if (row.file_data) {
-                    row.file_data = null;
-                }
-            });
-            result.rows = null;
-            result = null;
-        }
+        console.error('Error al recuperar archivo:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Error al recuperar el archivo'
+        });
     }
 });
 
-// Ruta para eliminar el archivo
 app.delete('/api/v1/delete-excel', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        await pool.query('DELETE FROM single_excel_file WHERE id = 1;');
+        await safeQuery('DELETE FROM single_excel_file WHERE id = 1');
         res.status(200).json({
             success: true,
-            message: "Archivo eliminado con exito!"
+            message: "Archivo eliminado con éxito!"
         });
     } catch (err) {
-        console.error(err);
+        console.error('Error al eliminar archivo:', err);
         res.status(500).json({
             success: false,
             error: "Error al eliminar el archivo"
@@ -429,9 +420,9 @@ app.delete('/api/v1/delete-excel', authenticateToken, requireAdmin, async (req, 
 
 app.get("/api/v1/files", authenticateToken, async (req, res) => {
     try {
-        result = await pool.query(`
+        const result = await safeQuery(`
             SELECT id, file_name, TO_CHAR(uploaded_at, 'YYYY-MM-DD') AS uploaded_date
-            FROM single_excel_file;
+            FROM single_excel_file
         `);
 
         if (result.rows.length === 0) {
@@ -442,26 +433,28 @@ app.get("/api/v1/files", authenticateToken, async (req, res) => {
         }
 
         const file = result.rows[0];
-
         res.status(200).json({
             id: file.id,
             file_name: file.file_name,
             uploaded_date: file.uploaded_date,
             success: true
         });
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error al obtener los archivos');
-    }
-})
 
+    } catch (err) {
+        console.error('Error al obtener archivos:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Error al obtener los archivos'
+        });
+    }
+});
+
+// Middleware para rutas no encontradas
 app.use((req, res, next) => {
-    // Si es la ruta de inicio, continuar normalmente
     if (req.path === '/') {
         return next();
     }
 
-    // Si es API que no existe, devolver 404
     if (req.path.startsWith('/api')) {
         return res.status(404).json({
             success: false,
@@ -472,15 +465,54 @@ app.use((req, res, next) => {
     res.redirect('/');
 });
 
+// Middleware global de manejo de errores
 app.use((err, req, res, next) => {
     console.error('Error no manejado:', err);
+
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({
+                success: false,
+                error: 'Archivo demasiado grande'
+            });
+        }
+        return res.status(400).json({
+            success: false,
+            error: 'Error al procesar archivo'
+        });
+    }
+
     res.status(500).json({
         success: false,
         error: 'Error interno del servidor'
     });
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${port}`);
-});
+// Función principal de inicialización
+const startServer = async () => {
+    try {
+        // Inicializar la base de datos
+        await initializeDatabase();
+
+        // Crear tablas si es necesario
+        await createTable();
+
+        const port = process.env.PORT || 3000;
+        const server = app.listen(port, '0.0.0.0', () => {
+            console.log(`🚀 Server running on port ${port}`);
+        });
+
+        server.timeout = 30000;
+
+        return server;
+
+    } catch (err) {
+        console.error('❌ Error al iniciar servidor:', err);
+        process.exit(1);
+    }
+};
+
+// Iniciar el servidor
+startServer().catch(console.error);
+
+module.exports = { app, startServer };

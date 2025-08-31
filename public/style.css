@@ -1,228 +1,47 @@
-@keyframes spinIn {
-  0% {
-    transform: rotate(-180deg) scale(0);
-    opacity: 0;
-  }
-
-  50% {
-    transform: rotate(0deg) scale(1.1);
-    opacity: 0.8;
-  }
-
-  100% {
-    transform: rotate(0deg) scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes slideUp {
-  0% {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
+/* Keyframes principales */
 @keyframes fadeIn {
   0% {
-    opacity: 0;
-  }
-
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.05);
-  }
-}
-
-@keyframes shake {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-
-  25% {
-    transform: translateX(-5px);
-  }
-
-  75% {
-    transform: translateX(5px);
-  }
-}
-
-@keyframes gradientShift {
-  0% {
-    background-position: 0% 50%;
-  }
-
-  50% {
-    background-position: 100% 50%;
-  }
-
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-.animate-spin-in {
-  animation: spinIn 0.7s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-.animate-slide-up {
-  animation: slideUp 0.5s ease-out;
-}
-
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
-}
-
-.animate-pulse-custom {
-  animation: pulse 0.3s ease-out;
-}
-
-.animate-shake {
-  animation: shake 0.5s ease-out;
-}
-
-.animate-gradient {
-  animation: gradientShift 3s ease infinite;
-}
-
-.glass-effect {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.gradient-bg {
-  background: linear-gradient(200deg, #000000, #797979);
-  min-height: 100vh;
-}
-
-.hover-lift {
-  transition: all 0.3s ease;
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-}
-
-.btn-success {
-  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-}
-
-.btn-danger {
-  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-}
-
-.loading-dots::after {
-  content: "";
-  animation: dots 1.5s infinite;
-}
-
-@keyframes dots {
-  0%,
-  20% {
-    content: ".";
-  }
-
-  40% {
-    content: "..";
-  }
-
-  60%,
-  100% {
-    content: "...";
-  }
-}
-
-.file-input {
-  position: relative;
-  overflow: hidden;
-  display: inline-block;
-  cursor: pointer;
-}
-
-#excelFile {
-  position: absolute;
-  left: -9999px;
-}
-
-.drag-over {
-  background: rgba(102, 126, 234, 0.1);
-  border-color: #667eea;
-  border-style: dashed;
-}
-
-/* Efecto de vidrio */
-.glass-effect {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.1);
-}
-
-/* Animaciones */
-@keyframes fadeIn {
-  from {
     opacity: 0;
     transform: translateY(30px);
   }
-  to {
+  100% {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
 @keyframes slideUp {
-  from {
+  0% {
     opacity: 0;
     transform: translateY(50px);
   }
-  to {
+  100% {
     opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes slideDown {
-  from {
-    transform: translateY(-100%);
-  }
-  to {
     transform: translateY(0);
   }
 }
 
 @keyframes slideUpOut {
-  from {
+  0% {
     transform: translateY(0);
   }
-  to {
+  100% {
     transform: translateY(-100%);
   }
 }
 
 @keyframes spinIn {
-  from {
+  0% {
     transform: rotate(-180deg) scale(0);
+    opacity: 0;
   }
-  to {
+  50% {
+    transform: rotate(0deg) scale(1.1);
+    opacity: 0.8;
+  }
+  100% {
     transform: rotate(0deg) scale(1);
+    opacity: 1;
   }
 }
 
@@ -262,31 +81,42 @@
   }
 }
 
+/* Clases de animación */
 .animate-fade-in {
   animation: fadeIn 0.6s ease-out;
 }
+
 .animate-slide-up {
   animation: slideUp 0.4s ease-out;
 }
-.animate-slide-down {
-  animation: slideDown 0.6s ease-out;
-}
+
 .animate-slide-up-out {
   animation: slideUpOut 0.6s ease-in forwards;
 }
+
 .animate-spin-in {
-  animation: spinIn 0.8s ease-out;
+  animation: spinIn 0.7s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
+
 .animate-shake {
   animation: shake 0.5s ease-in-out;
 }
+
 .animate-pulse-custom {
   animation: pulse 0.3s ease-in-out;
 }
 
-.loading-dots::after {
-  content: "...";
-  animation: loadingDots 1.5s infinite;
+/* Efectos de fondo y vidrio */
+.gradient-bg {
+  background: linear-gradient(200deg, #000000, #797979);
+  min-height: 100vh;
+}
+
+.glass-effect {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 25px 45px rgba(0, 0, 0, 0.1);
 }
 
 /* Botones */
@@ -312,7 +142,7 @@
   box-shadow: 0 10px 25px rgba(248, 113, 113, 0.4);
 }
 
-/* Input styling */
+/* Inputs con efecto de vidrio */
 .glass-input {
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
@@ -329,6 +159,32 @@
 
 .glass-input::placeholder {
   color: #ffffff;
+}
+
+/* Loading dots animation */
+.loading-dots::after {
+  content: "...";
+  animation: loadingDots 1.5s infinite;
+}
+
+/* Input de archivo oculto */
+#excelFile {
+  position: absolute;
+  left: -9999px;
+}
+
+.file-input {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+  cursor: pointer;
+}
+
+/* Hover effect para drag zone */
+.drag-over {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: #667eea;
+  border-style: dashed;
 }
 
 /* Cortina de login */
@@ -349,7 +205,7 @@
   animation: slideUpOut 0.8s ease-in forwards;
 }
 
-/* Hide dashboard initially */
+/* Dashboard visibility control */
 .dashboard {
   display: none;
 }
